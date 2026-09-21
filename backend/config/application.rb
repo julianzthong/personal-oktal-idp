@@ -40,5 +40,19 @@ module Backend
     # Middleware like session, flash, cookies can be added back manually.
     # Skip views, helpers and assets when generating a new resource.
     config.api_only = true
+
+    # UUID primary keys: a user's id is exposed as the `sub` claim in tokens,
+    # so it should be opaque rather than a guessable, sequential integer.
+    config.generators do |g|
+      g.orm :active_record, primary_key_type: :uuid
+    end
+
+    # API mode drops the session middleware, but /login sets a browser session
+    # that /authorize reads (the RP redirects the browser there), so add the
+    # cookie-backed session back in. SameSite=Lax lets the cookie ride along on
+    # the top-level GET navigation from a relying party to /authorize.
+    config.session_store :cookie_store, key: "_oktal_idp_session", same_site: :lax
+    config.middleware.use ActionDispatch::Cookies
+    config.middleware.use config.session_store, config.session_options
   end
 end
