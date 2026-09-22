@@ -5,8 +5,11 @@ Rails.application.routes.draw do
   # Can be used by load balancers and uptime monitors to verify that the app is live.
   get "up" => "rails/health#show", as: :rails_health_check
 
+  post "signup", to: "registrations#create"
   post "login", to: "sessions#create"
+  delete "logout", to: "sessions#destroy"
   get "authorize", to: "authorizations#show"
   post "token", to: "tokens#create"
   get "/.well-known/jwks.json", to: "jwks#show", format: false
+  get "/.well-known/openid-configuration", to: "discovery#show", format: false
 end

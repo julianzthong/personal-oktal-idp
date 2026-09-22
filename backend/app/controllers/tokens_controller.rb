@@ -9,28 +9,48 @@ class TokensController < ApplicationController
     unless params[:grant_type] == "authorization_code"
       return render_oauth_error("unsupported_grant_type")
     end
-    return render_oauth_error("invalid_request", "code and redirect_uri are required") if params[:code].blank? || params[:redirect_uri].blank?
+    if params[:code].blank? || params[:redirect_uri].blank? || params[:code_verifier].blank?
+      return render_oauth_error("invalid_request", "code, redirect_uri and code_verifier are required")
+    end
 
     authorization_code = client.authorization_codes.lookup(params[:code])
     unless redeemable?(authorization_code) && authorization_code.consume!
-      return render_oauth_error("invalid_grant", "Authorization code is invalid, expired or already used")
+      return render_oauth_error("invalid_grant", "The authorization code is invalid, expired or already used, or the redirect_uri or code_verifier does not match")
     end
 
-    render json: {
-      access_token: Oidc::AccessToken.issue(user: authorization_code.user, client: client, scopes: authorization_code.scopes),
-      token_type: "Bearer",
-      expires_in: Rails.configuration.x.oidc.access_token_ttl.to_i,
-      scope: authorization_code.scopes.join(" ")
-    }
+    render json: token_response(authorization_code)
   end
 
   private
-    # The redirect_uri must be identical to the one used at /authorize (RFC 6749 §4.1.3).
+    def token_response(authorization_code)
+      user, client, scopes = authorization_code.user, authorization_code.oauth_client, authorization_code.scopes
+      access_token = Oidc::AccessToken.issue(user: user, client: client, scopes: scopes)
+
+      response = {
+        access_token: access_token,
+        token_type: "Bearer",
+        expires_in: Rails.configuration.x.oidc.access_token_ttl.to_i,
+        scope: scopes.join(" ")
+      }
+      # The ID token is what makes this OpenID Connect rather than plain OAuth 2.0.
+      if scopes.include?("openid")
+        response[:id_token] = Oidc::IdToken.issue(
+          user: user, client: client, access_token: access_token,
+          nonce: authorization_code.nonce, auth_time: authorization_code.auth_time
+        )
+      end
+      response
+    end
+
+    # The redirect_uri must be identical to the one used at /authorize (RFC 6749 §4.1.3),
+    # and the code_verifier must hash to the challenge stored with the code (RFC 7636 §4.6).
+    # Both are checked before the code is consumed, so a wrong guess doesn't burn it.
     def redeemable?(authorization_code)
       authorization_code.present? &&
         !authorization_code.expired? &&
         !authorization_code.consumed? &&
-        authorization_code.redirect_uri == params[:redirect_uri]
+        authorization_code.redirect_uri == params[:redirect_uri] &&
+        Oidc::Pkce.verified?(verifier: params[:code_verifier], challenge: authorization_code.code_challenge)
     end
 
     # Supports client_secret_basic (Authorization header) and client_secret_post (body).

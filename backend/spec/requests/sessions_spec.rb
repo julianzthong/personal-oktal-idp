@@ -1,5 +1,25 @@
 require "rails_helper"
 
+RSpec.describe "DELETE /logout", type: :request do
+  it "ends the session, so /authorize asks for a login again" do
+    user = create_user
+    client = create_client
+    authorize_params = {
+      response_type: "code", client_id: client.client_id, redirect_uri: client.redirect_uri,
+      code_challenge: OidcHelpers::PKCE_CHALLENGE, code_challenge_method: "S256"
+    }
+    log_in(user)
+    get "/authorize", params: authorize_params
+    expect(response.location).to start_with(client.redirect_uri)
+
+    delete "/logout"
+    expect(response).to have_http_status(:no_content)
+
+    get "/authorize", params: authorize_params
+    expect(response.location).to start_with(Rails.configuration.x.oidc.login_url)
+  end
+end
+
 RSpec.describe "POST /login", type: :request do
   let!(:user) { create_user }
 

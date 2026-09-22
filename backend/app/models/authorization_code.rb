@@ -7,18 +7,21 @@ class AuthorizationCode < ApplicationRecord
 
   attr_reader :code
 
-  validates :code_digest, :redirect_uri, :expires_at, presence: true
+  validates :code_digest, :redirect_uri, :expires_at, :code_challenge, presence: true
 
   scope :unexpired, -> { where("expires_at > ?", Time.current) }
 
   class << self
-    def issue!(user:, client:, scopes:, redirect_uri:)
+    def issue!(user:, client:, scopes:, redirect_uri:, code_challenge:, nonce: nil, auth_time: nil)
       code = SecureRandom.urlsafe_base64(32)
       record = create!(
         user: user,
         oauth_client: client,
         scopes: scopes,
         redirect_uri: redirect_uri,
+        code_challenge: code_challenge,
+        nonce: nonce,
+        auth_time: auth_time,
         code_digest: digest(code),
         expires_at: Rails.configuration.x.oidc.authorization_code_ttl.from_now
       )
