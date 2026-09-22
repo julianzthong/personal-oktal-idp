@@ -74,10 +74,4 @@ class TokensController < ApplicationController
       response.headers["WWW-Authenticate"] = 'Basic realm="token"' if basic_auth?
       render_oauth_error("invalid_client", status: :unauthorized)
     end
-
-    # Token responses must not be cached (RFC 6749 §5.1).
-    def prevent_caching
-      response.headers["Cache-Control"] = "no-store"
-      response.headers["Pragma"] = "no-cache"
-    end
 end

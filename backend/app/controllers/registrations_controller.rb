@@ -17,7 +17,7 @@ class RegistrationsController < ApplicationController
 
   private
     def signup_params
-      params.permit(:email, :password, :password_confirmation)
+      params.permit(:name, :email, :password, :password_confirmation)
     end
 
     def render_signup_errors(messages)

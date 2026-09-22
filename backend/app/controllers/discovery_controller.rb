@@ -10,6 +10,7 @@ class DiscoveryController < ApplicationController
       issuer: config.issuer,
       authorization_endpoint: "#{issuer}/authorize",
       token_endpoint: "#{issuer}/token",
+      userinfo_endpoint: "#{issuer}/userinfo",
       jwks_uri: "#{issuer}/.well-known/jwks.json",
       response_types_supported: [ "code" ],
       grant_types_supported: [ "authorization_code" ],
@@ -18,7 +19,7 @@ class DiscoveryController < ApplicationController
       id_token_signing_alg_values_supported: [ Oidc::SigningKey::ALGORITHM ],
       token_endpoint_auth_methods_supported: [ "client_secret_basic", "client_secret_post" ],
       scopes_supported: config.supported_scopes,
-      claims_supported: %w[ iss sub aud exp iat auth_time nonce at_hash ]
+      claims_supported: %w[ iss sub aud exp iat auth_time nonce at_hash name email email_verified ]
     }
   end
 end

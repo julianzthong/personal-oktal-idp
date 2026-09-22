@@ -10,6 +10,7 @@ Rails.application.routes.draw do
   delete "logout", to: "sessions#destroy"
   get "authorize", to: "authorizations#show"
   post "token", to: "tokens#create"
+  match "userinfo", to: "userinfo#show", via: [ :get, :post ]
   get "/.well-known/jwks.json", to: "jwks#show", format: false
   get "/.well-known/openid-configuration", to: "discovery#show", format: false
 end

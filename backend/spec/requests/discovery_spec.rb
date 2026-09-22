@@ -12,6 +12,7 @@ RSpec.describe "GET /.well-known/openid-configuration", type: :request do
       "issuer" => issuer,
       "authorization_endpoint" => "#{issuer}/authorize",
       "token_endpoint" => "#{issuer}/token",
+      "userinfo_endpoint" => "#{issuer}/userinfo",
       "jwks_uri" => "#{issuer}/.well-known/jwks.json",
       "response_types_supported" => [ "code" ],
       "subject_types_supported" => [ "public" ],
@@ -25,10 +26,8 @@ RSpec.describe "GET /.well-known/openid-configuration", type: :request do
     get "/.well-known/openid-configuration"
     metadata = response.parsed_body
 
-    expect(metadata).not_to have_key("userinfo_endpoint")
-
     # The advertised paths are real routes, not just plausible-looking strings.
-    %w[authorization_endpoint token_endpoint jwks_uri].each do |name|
+    %w[authorization_endpoint token_endpoint userinfo_endpoint jwks_uri].each do |name|
       path = URI.parse(metadata.fetch(name)).path
       expect { Rails.application.routes.recognize_path(path, method: name == "token_endpoint" ? "POST" : "GET") }
         .not_to raise_error

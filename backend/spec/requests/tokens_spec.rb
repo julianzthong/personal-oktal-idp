@@ -31,7 +31,7 @@ RSpec.describe "POST /token", type: :request do
     expect(payload).to include(
       "iss" => Rails.configuration.x.oidc.issuer,
       "sub" => user.id,
-      "aud" => client.client_id,
+      "aud" => Rails.configuration.x.oidc.issuer,
       "client_id" => client.client_id,
       "scope" => "openid email"
     )

@@ -5,6 +5,12 @@ class ApplicationController < ActionController::API
       @current_user = User.find_by(id: session[:user_id]) if session[:user_id] && session[:auth_time]
     end
 
+    # For responses carrying tokens or personal data (RFC 6749 §5.1).
+    def prevent_caching
+      response.headers["Cache-Control"] = "no-store"
+      response.headers["Pragma"] = "no-cache"
+    end
+
     # Starts a fresh session for the user; resetting first avoids session fixation.
     def start_session_for(user)
       reset_session

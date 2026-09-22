@@ -6,6 +6,7 @@ require "rails_helper"
 RSpec.describe "Authorization code flow", type: :request do
   it "issues an access token and ID token that verify against the published JWKS" do
     user = create_user
+    user.update!(name: "Ada Lovelace")
     client = create_client
     issuer = Rails.configuration.x.oidc.issuer
 
@@ -38,7 +39,7 @@ RSpec.describe "Authorization code flow", type: :request do
 
     access_token, = JWT.decode(
       tokens.fetch("access_token"), jwk.public_key, true,
-      algorithms: [ "RS256" ], iss: issuer, verify_iss: true, aud: client.client_id, verify_aud: true
+      algorithms: [ "RS256" ], iss: issuer, verify_iss: true, aud: issuer, verify_aud: true
     )
     expect(access_token).to include("sub" => user.id, "scope" => "openid profile")
 
@@ -47,5 +48,10 @@ RSpec.describe "Authorization code flow", type: :request do
       algorithms: [ "RS256" ], iss: issuer, verify_iss: true, aud: client.client_id, verify_aud: true
     )
     expect(id_token).to include("sub" => user.id, "nonce" => "n-0S6_WzA2Mj", "auth_time" => be_a(Integer))
+
+    # The access token unlocks /userinfo, whose sub must match the ID token's (OIDC Core §5.3.2).
+    get URI.parse(metadata["userinfo_endpoint"]).path, headers: { "Authorization" => "Bearer #{tokens['access_token']}" }
+    expect(response).to have_http_status(:ok)
+    expect(response.parsed_body).to eq("sub" => id_token["sub"], "name" => "Ada Lovelace")
   end
 end

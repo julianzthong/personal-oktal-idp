@@ -20,6 +20,19 @@ RSpec.describe "POST /signup", type: :request do
     expect(user.password_digest).not_to include(password)
   end
 
+  it "stores an optional name, trimmed" do
+    post "/signup", params: params.merge(name: "  Grace Hopper ")
+
+    expect(User.find_by!(email: "new.user@example.com").name).to eq("Grace Hopper")
+  end
+
+  it "treats a blank name as no name" do
+    post "/signup", params: params.merge(name: "   ")
+
+    expect(response).to have_http_status(:created)
+    expect(User.find_by!(email: "new.user@example.com").name).to be_nil
+  end
+
   it "logs the new user in, so /authorize continues instead of asking for a login" do
     post "/signup", params: params
 
@@ -58,6 +71,7 @@ RSpec.describe "POST /signup", type: :request do
     "a confirmation that doesn't match" => [ { password_confirmation: "something else entirely" }, /Password confirmation doesn't match/ ],
     "a malformed email" => [ { email: "not-an-email" }, /Email is invalid/ ],
     "a missing email" => [ { email: "" }, /Email can't be blank/ ],
+    "a name that is too long" => [ { name: "x" * 101 }, /Name is too long/ ],
     "a missing password" => [ { password: "", password_confirmation: "" }, /Password can't be blank/ ]
   }.each do |description, (overrides, message)|
     it "rejects #{description}, creating nothing and logging nobody in" do

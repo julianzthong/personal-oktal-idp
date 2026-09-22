@@ -6,9 +6,10 @@
 # Log in at the frontend with dev@example.com / password123. The client matches
 # the sample relying party (sample-rp/), which listens on localhost:4000.
 if Rails.env.development?
-  User.find_or_create_by!(email: "dev@example.com") do |user|
-    user.password = "password123"
-  end
+  user = User.find_or_initialize_by(email: "dev@example.com")
+  user.password = "password123" if user.new_record?
+  user.name ||= "Dev User"
+  user.save!
 
   OauthClient.find_or_create_by!(client_id: "sample-rp") do |client|
     client.name = "Sample Relying Party"

@@ -16,11 +16,13 @@ Rails.application.config.middleware.insert_before 0, Rack::Cors do
     resource "/logout", headers: :any, methods: [ :delete, :options ], credentials: true
   end
 
-  # Public metadata that browser-based relying parties need to read. No
-  # credentials are involved, so any origin is fine.
+  # Endpoints that browser-based relying parties call directly. None of them use
+  # cookies (/userinfo takes a bearer token), so any origin is fine. WWW-Authenticate
+  # is exposed so a client can read why a token was rejected.
   allow do
     origins "*"
 
+    resource "/userinfo", headers: :any, methods: [ :get, :post, :options ], credentials: false, expose: [ "WWW-Authenticate" ]
     resource "/.well-known/*", headers: :any, methods: [ :get, :options ], credentials: false
   end
 end
