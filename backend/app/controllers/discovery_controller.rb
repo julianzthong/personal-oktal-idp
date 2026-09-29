@@ -13,7 +13,7 @@ class DiscoveryController < ApplicationController
       userinfo_endpoint: "#{issuer}/userinfo",
       jwks_uri: "#{issuer}/.well-known/jwks.json",
       response_types_supported: [ "code" ],
-      grant_types_supported: [ "authorization_code" ],
+      grant_types_supported: [ "authorization_code", "refresh_token" ],
       subject_types_supported: [ "public" ],
       code_challenge_methods_supported: [ Oidc::Pkce::METHOD ],
       id_token_signing_alg_values_supported: [ Oidc::SigningKey::ALGORITHM ],

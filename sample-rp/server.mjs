@@ -18,7 +18,9 @@ const CLIENT_ID = process.env.CLIENT_ID ?? 'sample-rp'
 const CLIENT_SECRET = process.env.CLIENT_SECRET ?? 'sample-rp-secret'
 const PORT = Number(process.env.PORT ?? 4000)
 const REDIRECT_URI = process.env.REDIRECT_URI ?? `http://localhost:${PORT}/callback`
-const SCOPE = 'openid profile email'
+// offline_access is what makes the IdP hand back a refresh token alongside
+// the access token — see the "Refresh access token" button on the dashboard.
+const SCOPE = 'openid profile email offline_access'
 const FLOW_TTL_MS = 10 * 60 * 1000
 
 const sha256 = (input) => createHash('sha256').update(input).digest()
@@ -33,6 +35,13 @@ const safeEqual = (a, b) => {
 // Login attempts in flight, keyed by the id in the `rp_sid` cookie. Each holds
 // the secrets that must survive the round trip through the IdP.
 const pending = new Map()
+
+// Completed logins, keyed by the id in the `rp_session` cookie. This is the
+// RP's own idea of "who's using this app right now" — separate from, and
+// outliving, the IdP's browser login session. That's the whole point of a
+// refresh token: it lets the RP keep working on the user's behalf even after
+// they've closed the tab, without asking them to sign in again.
+const sessions = new Map()
 
 async function getJson(url, init) {
   const response = await fetch(url, init)
@@ -143,7 +152,72 @@ async function handleCallback(req, res, query) {
   }
   result.checks.push({ name: 'UserInfo sub matches the ID token sub', ok: true, detail: `sub = ${userinfo.sub}` })
 
-  sendPage(res, 200, 'Signed in', renderSuccess(tokens, result, userinfo))
+  const sessionId = randomToken(16)
+  sessions.set(sessionId, { tokens, result, userinfo, refreshCount: 0, refreshedAt: null })
+  res.writeHead(302, {
+    Location: '/dashboard',
+    'Set-Cookie': `rp_session=${sessionId}; HttpOnly; SameSite=Lax; Path=/`,
+  })
+  res.end()
+}
+
+// --- Refreshing, once the access token is getting old --------------------
+
+async function handleDashboard(req, res) {
+  const session = sessions.get(parseCookies(req).rp_session)
+  if (!session) return sendPage(res, 400, 'Not signed in', '<p><a href="/login">Log in</a> to see this.</p>')
+
+  sendPage(res, 200, 'Signed in', renderSuccess(session))
+}
+
+async function handleRefresh(req, res) {
+  const sessionId = parseCookies(req).rp_session
+  const session = sessions.get(sessionId)
+  if (!session) return sendPage(res, 400, 'Not signed in', '<p><a href="/login">Log in</a> to see this.</p>')
+  if (!session.tokens.refresh_token) {
+    return sendPage(res, 400, 'No refresh token', '<p>This session has no refresh token to use (offline_access wasn\'t granted).</p>')
+  }
+
+  const { token_endpoint, jwks_uri, userinfo_endpoint } = await discover()
+  const basic = Buffer.from(`${encodeURIComponent(CLIENT_ID)}:${encodeURIComponent(CLIENT_SECRET)}`).toString('base64')
+
+  // Server-to-server, exactly like the original code exchange: the refresh
+  // token and client secret never touch the browser.
+  const { response, body: tokens } = await getJson(token_endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${basic}` },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: session.tokens.refresh_token }),
+  })
+  if (!response.ok) {
+    return sendPage(res, 502, 'Refresh failed', `<pre>${escapeHtml(JSON.stringify(tokens, null, 2))}</pre>`)
+  }
+
+  // The refresh token in this response replaces the one we just used —
+  // rotation means the old one is now dead. If we didn't store the new one
+  // here, the next refresh would fail as "already used".
+  const { body: jwks } = await getJson(jwks_uri)
+  const result = verifyIdToken(tokens.id_token, { jwks, nonce: undefined, accessToken: tokens.access_token })
+
+  // Prove the new access token actually works, not just that it decodes.
+  const { response: userinfoResponse, body: userinfo } = await getJson(userinfo_endpoint, {
+    headers: { Authorization: `Bearer ${tokens.access_token}` },
+  })
+  if (!userinfoResponse.ok) {
+    return sendPage(res, 502, 'UserInfo request failed with the refreshed access token', `<pre>${escapeHtml(JSON.stringify(userinfo, null, 2))}</pre>`)
+  }
+  result.checks.push({ name: 'UserInfo still works with the refreshed access token', ok: true, detail: `sub = ${userinfo.sub}` })
+
+  sessions.set(sessionId, {
+    tokens, result, userinfo, refreshCount: session.refreshCount + 1, refreshedAt: Date.now(),
+  })
+  res.writeHead(302, { Location: '/dashboard' })
+  res.end()
+}
+
+function handleForget(req, res) {
+  sessions.delete(parseCookies(req).rp_session)
+  res.writeHead(302, { Location: '/', 'Set-Cookie': 'rp_session=; Max-Age=0; Path=/' })
+  res.end()
 }
 
 // OIDC Core §3.1.3.7. Each check is recorded so the page can show what passed;
@@ -176,7 +250,15 @@ function verifyIdToken(idToken, { jwks, nonce, accessToken }) {
   check('iss is the issuer', claims.iss === ISSUER, `iss = ${claims.iss}`)
   check('aud contains our client_id', [claims.aud].flat().includes(CLIENT_ID), `aud = ${claims.aud}`)
   check('exp is in the future', claims.exp > Math.floor(Date.now() / 1000), `exp = ${claims.exp}`)
-  check('nonce matches the one we sent', claims.nonce === nonce, `nonce = ${claims.nonce}`)
+  // A freshly logged-in ID token carries the nonce we sent to /authorize. A
+  // refreshed one shouldn't: refreshing isn't a new authentication, so there's
+  // no fresh nonce for it to echo (OIDC Core §12.2 — and confirms the IdP
+  // actually implements that distinction, not just that it ignores nonce entirely).
+  if (nonce === undefined) {
+    check('nonce is absent (this is a refresh, not a fresh login)', claims.nonce === undefined, `nonce = ${claims.nonce}`)
+  } else {
+    check('nonce matches the one we sent', claims.nonce === nonce, `nonce = ${claims.nonce}`)
+  }
   const atHash = base64url(sha256(accessToken).subarray(0, 16))
   check('at_hash matches the access token', claims.at_hash === atHash, `at_hash = ${claims.at_hash}`)
 
@@ -185,11 +267,26 @@ function verifyIdToken(idToken, { jwks, nonce, accessToken }) {
 
 // --- Pages ------------------------------------------------------------------
 
-function renderSuccess(tokens, { header, claims, checks }, userinfo) {
+function renderSuccess({ tokens, result: { header, claims, checks }, userinfo, refreshCount, refreshedAt }) {
   const accessTokenClaims = JSON.parse(Buffer.from(tokens.access_token.split('.')[1], 'base64url'))
   const checkItems = checks.map((c) => `<li>✅ ${escapeHtml(c.name)} <small>${escapeHtml(c.detail)}</small></li>`).join('')
   const json = (value) => `<pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>`
   const authTime = claims.auth_time ? new Date(claims.auth_time * 1000).toLocaleString() : 'unknown'
+  // A fingerprint, not the token itself, just to make "this changed" visible
+  // across refreshes without ever printing a live credential to the page.
+  const fingerprint = (token) => (token ? base64url(sha256(token)).slice(0, 12) : null)
+
+  const refreshSection = tokens.refresh_token
+    ? `
+    <h2>Refresh</h2>
+    <p>
+      Refresh token on file: <code>${escapeHtml(fingerprint(tokens.refresh_token))}…</code> (fingerprint only — the
+      real value never leaves this server).
+      ${refreshCount > 0 ? `Refreshed ${refreshCount} time(s), last at ${escapeHtml(new Date(refreshedAt).toLocaleTimeString())}.` : 'Not refreshed yet.'}
+    </p>
+    <form method="POST" action="/refresh"><button type="submit">Refresh access token</button></form>
+    <p><small>Each refresh rotates the refresh token: the value above changes, and the one used to get here stops working (try resubmitting an old tab's form after a refresh — it'll fail).</small></p>`
+    : `<h2>Refresh</h2><p>No refresh token: the login didn't request <code>offline_access</code>.</p>`
 
   return `
     <p>Logged in as <strong>${escapeHtml(userinfo.name ?? userinfo.email ?? 'an unnamed user')}</strong> (user <code>${escapeHtml(claims.sub)}</code>), who authenticated at ${escapeHtml(authTime)}.</p>
@@ -201,7 +298,8 @@ function renderSuccess(tokens, { header, claims, checks }, userinfo) {
     <h2>Access token claims</h2>
     <p><small>Decoded for display only. A relying party should treat the access token as opaque and just present it as a bearer token; verifying it is the API's job.</small></p>
     ${json(accessTokenClaims)}
-    <p><a href="/login">Log in again</a></p>`
+    ${refreshSection}
+    <p><a href="/login">Log in again</a> · <form method="POST" action="/forget" style="display: inline"><button type="submit" style="all: unset; cursor: pointer; text-decoration: underline">Forget this session (local only, doesn't touch the IdP)</button></form></p>`
 }
 
 function sendPage(res, status, title, body) {
@@ -238,6 +336,12 @@ createServer(async (req, res) => {
       await startLogin(res)
     } else if (req.method === 'GET' && url.pathname === '/callback') {
       await handleCallback(req, res, url.searchParams)
+    } else if (req.method === 'GET' && url.pathname === '/dashboard') {
+      await handleDashboard(req, res)
+    } else if (req.method === 'POST' && url.pathname === '/refresh') {
+      await handleRefresh(req, res)
+    } else if (req.method === 'POST' && url.pathname === '/forget') {
+      handleForget(req, res)
     } else {
       sendPage(res, 404, 'Not found', '<p><a href="/">Home</a></p>')
     }

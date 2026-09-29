@@ -9,6 +9,7 @@ class OauthClient < ApplicationRecord
 
   has_many :authorization_codes, dependent: :destroy
   has_many :grants, dependent: :destroy
+  has_many :refresh_tokens, dependent: :destroy
 
   before_validation :generate_credentials, on: :create
 

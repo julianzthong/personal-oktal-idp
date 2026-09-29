@@ -6,6 +6,7 @@ const SCOPE_DESCRIPTIONS: Record<string, string> = {
   openid: 'Confirm your identity',
   profile: 'Access your name',
   email: 'Access your email address',
+  offline_access: "Keep you signed in, even when you're not using the app",
 }
 
 // /authorize sends a logged-in user here when they haven't yet approved a

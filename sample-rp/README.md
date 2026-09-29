@@ -24,5 +24,12 @@ JWKS and its `iss`, `aud`, `exp`, `nonce` and `at_hash` claims. It then calls
 `/userinfo` with the access token and checks that its `sub` matches the ID token's. It is written
 independently of the Rails code on purpose, so the two act as a check on each other.
 
+It requests `offline_access`, so the IdP also hands back a refresh token. The
+dashboard has a **Refresh access token** button that calls the IdP's `/token`
+endpoint again with `grant_type=refresh_token` — server-to-server, the same as
+the original code exchange — and shows the new access token's claims plus a
+fingerprint of the (rotated) refresh token, so you can see it change on each
+refresh. The refresh token itself never reaches the browser.
+
 Configuration (all optional): `ISSUER`, `CLIENT_ID`, `CLIENT_SECRET`, `PORT`,
 `REDIRECT_URI`.

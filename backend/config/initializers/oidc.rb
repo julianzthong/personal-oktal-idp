@@ -16,9 +16,13 @@ Rails.application.config.x.oidc.tap do |oidc|
   oidc.access_token_ttl = 1.hour
   oidc.id_token_ttl = 10.minutes
 
+  # Refresh tokens are only issued when offline_access is requested, and they
+  # rotate on every use (see RefreshToken and TokensController).
+  oidc.refresh_token_ttl = 30.days
+
   # Authorization codes are single-use and meant to be redeemed immediately
   # (RFC 6749 recommends a maximum of 10 minutes).
   oidc.authorization_code_ttl = 60.seconds
 
-  oidc.supported_scopes = %w[ openid profile email ].freeze
+  oidc.supported_scopes = %w[ openid profile email offline_access ].freeze
 end

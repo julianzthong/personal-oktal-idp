@@ -82,6 +82,24 @@ RSpec.describe "POST /token", type: :request do
     expect(id_token).not_to have_key("nonce")
   end
 
+  it "issues a refresh token when offline_access was requested" do
+    code = AuthorizationCode.issue!(user: user, client: client, scopes: %w[openid offline_access], redirect_uri: client.redirect_uri,
+      code_challenge: OidcHelpers::PKCE_CHALLENGE, auth_time: Time.current)
+
+    post "/token", params: params.merge(code: code.code)
+
+    expect(response.parsed_body).to include("refresh_token" => be_present)
+    stored = RefreshToken.lookup(response.parsed_body["refresh_token"])
+    expect(stored).to have_attributes(user: user, oauth_client: client, scopes: %w[openid offline_access])
+  end
+
+  it "does not issue a refresh token without offline_access" do
+    post "/token", params: params
+
+    expect(response.parsed_body).not_to have_key("refresh_token")
+    expect(RefreshToken.count).to eq(0)
+  end
+
   it "accepts client credentials via HTTP Basic auth" do
     post "/token",
       params: params.except(:client_id, :client_secret),

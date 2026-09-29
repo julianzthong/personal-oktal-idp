@@ -3,6 +3,7 @@ class User < ApplicationRecord
 
   has_many :authorization_codes, dependent: :destroy
   has_many :grants, dependent: :destroy
+  has_many :refresh_tokens, dependent: :destroy
 
   normalizes :email, with: ->(email) { email.strip.downcase }
   normalizes :name, with: ->(name) { name.strip.presence }
