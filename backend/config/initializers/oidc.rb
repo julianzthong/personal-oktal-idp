@@ -20,6 +20,13 @@ Rails.application.config.x.oidc.tap do |oidc|
   # rotate on every use (see RefreshToken and TokensController).
   oidc.refresh_token_ttl = 30.days
 
+  # How long after a refresh token is consumed its immediate replacement can
+  # still be advanced on the *parent's* behalf — accommodates a client that
+  # never received the rotated response and retries with the old token. Only
+  # the single most-recently-issued token is ever forgiven this way, and only
+  # if nothing has touched its replacement yet (RefreshToken#grace_eligible?).
+  oidc.refresh_token_grace_period = 30.seconds
+
   # Authorization codes are single-use and meant to be redeemed immediately
   # (RFC 6749 recommends a maximum of 10 minutes).
   oidc.authorization_code_ttl = 60.seconds

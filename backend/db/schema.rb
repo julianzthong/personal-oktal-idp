@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_29_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_29_140000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -83,6 +83,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_29_130000) do
     t.datetime "expires_at", null: false
     t.uuid "family_id", null: false
     t.uuid "oauth_client_id", null: false
+    t.uuid "replaced_by_id"
     t.datetime "revoked_at"
     t.string "scopes", default: [], null: false, array: true
     t.string "token_digest", null: false
@@ -90,6 +91,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_29_130000) do
     t.uuid "user_id", null: false
     t.index ["family_id"], name: "index_refresh_tokens_on_family_id"
     t.index ["oauth_client_id"], name: "index_refresh_tokens_on_oauth_client_id"
+    t.index ["replaced_by_id"], name: "index_refresh_tokens_on_replaced_by_id", unique: true
     t.index ["token_digest"], name: "index_refresh_tokens_on_token_digest", unique: true
     t.index ["user_id"], name: "index_refresh_tokens_on_user_id"
   end
@@ -109,5 +111,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_29_130000) do
   add_foreign_key "grants", "oauth_clients"
   add_foreign_key "grants", "users"
   add_foreign_key "refresh_tokens", "oauth_clients"
+  add_foreign_key "refresh_tokens", "refresh_tokens", column: "replaced_by_id"
   add_foreign_key "refresh_tokens", "users"
 end

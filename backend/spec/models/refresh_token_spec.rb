@@ -64,6 +64,14 @@ RSpec.describe RefreshToken, type: :model do
       expect(described_class.rotate!(original).scopes).to eq(%w[openid email])
       expect(described_class.rotate!(original, scopes: %w[openid]).scopes).to eq(%w[openid])
     end
+
+    it "links the previous token to its replacement" do
+      original = described_class.issue!(user: user, client: client, scopes: %w[openid], auth_time: auth_time)
+
+      rotated = described_class.rotate!(original)
+
+      expect(original.reload.replaced_by).to eq(rotated)
+    end
   end
 
   describe "#consume!" do
@@ -110,6 +118,66 @@ RSpec.describe RefreshToken, type: :model do
       family_a.revoke_family!
 
       expect(family_b.reload.revoked_at).to be_nil
+    end
+  end
+
+  describe "#grace_eligible?" do
+    let(:grace_period) { Rails.configuration.x.oidc.refresh_token_grace_period }
+
+    it "is false for a token that was never consumed" do
+      refresh_token = described_class.issue!(user: user, client: client, scopes: %w[openid], auth_time: auth_time)
+
+      expect(refresh_token.grace_eligible?).to be(false)
+    end
+
+    it "is true once consumed, within the window, with an untouched replacement" do
+      refresh_token = described_class.issue!(user: user, client: client, scopes: %w[openid], auth_time: auth_time)
+      refresh_token.consume!
+      described_class.rotate!(refresh_token)
+
+      expect(refresh_token.reload.grace_eligible?).to be(true)
+    end
+
+    it "is false once the window has passed" do
+      refresh_token = described_class.issue!(user: user, client: client, scopes: %w[openid], auth_time: auth_time)
+      refresh_token.consume!
+      described_class.rotate!(refresh_token)
+
+      travel_to((grace_period + 1.second).from_now) { expect(refresh_token.reload.grace_eligible?).to be(false) }
+    end
+
+    it "is false once the replacement has itself been consumed" do
+      refresh_token = described_class.issue!(user: user, client: client, scopes: %w[openid], auth_time: auth_time)
+      refresh_token.consume!
+      child = described_class.rotate!(refresh_token)
+      child.consume!
+
+      expect(refresh_token.reload.grace_eligible?).to be(false)
+    end
+
+    it "is false once the replacement has been revoked" do
+      refresh_token = described_class.issue!(user: user, client: client, scopes: %w[openid], auth_time: auth_time)
+      refresh_token.consume!
+      child = described_class.rotate!(refresh_token)
+      child.revoke_family!
+
+      expect(refresh_token.reload.grace_eligible?).to be(false)
+    end
+
+    it "is false for a token with no replacement at all" do
+      refresh_token = described_class.issue!(user: user, client: client, scopes: %w[openid], auth_time: auth_time)
+      refresh_token.consume!
+
+      expect(refresh_token.grace_eligible?).to be(false)
+    end
+
+    it "is false once the family has been revoked" do
+      refresh_token = described_class.issue!(user: user, client: client, scopes: %w[openid], auth_time: auth_time)
+      refresh_token.consume!
+      described_class.rotate!(refresh_token)
+      refresh_token.revoke_family!
+
+      expect(refresh_token.reload.grace_eligible?).to be(false)
     end
   end
 

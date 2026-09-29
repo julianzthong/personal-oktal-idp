@@ -43,8 +43,11 @@ class TokensController < ApplicationController
     # Rotation: every refresh consumes the presented token and issues a new one
     # in its place, sharing the same family. A token that fails to consume —
     # because it was already used, or the family was already shut down — is
-    # reuse of a token that should no longer exist, so the whole family is cut
-    # off rather than just rejecting this one request.
+    # normally treated as reuse and shuts the whole family off. The one
+    # exception is a same-token retry that arrives soon enough, and whose
+    # child was never touched: that looks like a lost response rather than
+    # theft, so it's forgiven once, by advancing past the untouched child
+    # instead of the (dead) token that was actually presented.
     def handle_refresh_token_grant(client)
       return render_oauth_error("invalid_request", "refresh_token is required") if params[:refresh_token].blank?
 
@@ -54,15 +57,23 @@ class TokensController < ApplicationController
       scopes = narrowed_scopes(refresh_token)
       return render_oauth_error("invalid_scope", "Cannot request a scope beyond what was originally granted") unless scopes
 
-      unless refresh_token.consume!
-        refresh_token.revoke_family!
-        return render_oauth_error("invalid_grant", "The refresh token has already been used")
+      if refresh_token.consume!
+        return render json: rotate_and_respond(refresh_token, client: client, scopes: scopes)
       end
 
-      rotated = RefreshToken.rotate!(refresh_token, scopes: scopes)
-      render json: token_response(
-        user: refresh_token.user, client: client, scopes: scopes, auth_time: refresh_token.auth_time, refresh_token: rotated
-      )
+      if refresh_token.grace_eligible? && refresh_token.replaced_by.consume!
+        return render json: rotate_and_respond(refresh_token.replaced_by, client: client, scopes: scopes)
+      end
+
+      refresh_token.revoke_family!
+      render_oauth_error("invalid_grant", "The refresh token has already been used")
+    end
+
+    # auth_time is invariant across a family (rotate! always carries it
+    # forward), so it's always read off whichever token is being rotated here.
+    def rotate_and_respond(consumed_token, client:, scopes:)
+      rotated = RefreshToken.rotate!(consumed_token, scopes: scopes)
+      token_response(user: consumed_token.user, client: client, scopes: scopes, auth_time: consumed_token.auth_time, refresh_token: rotated)
     end
 
     # RFC 6749 §6: an omitted scope means "the same as before"; an explicit one

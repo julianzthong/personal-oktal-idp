@@ -66,10 +66,12 @@ RSpec.describe "POST /token (refresh_token grant)", type: :request do
   end
 
   describe "reuse detection" do
-    it "rejects a refresh token that has already been used" do
+    let(:grace_period) { Rails.configuration.x.oidc.refresh_token_grace_period }
+
+    it "rejects a refresh token reused after the grace period has passed" do
       post "/token", params: params
 
-      post "/token", params: params
+      travel_to((grace_period + 1.second).from_now) { post "/token", params: params }
 
       expect(response).to have_http_status(:bad_request)
       expect(response.parsed_body).to include("error" => "invalid_grant", "error_description" => "The refresh token has already been used")
@@ -79,9 +81,9 @@ RSpec.describe "POST /token (refresh_token grant)", type: :request do
       post "/token", params: params
       current_token = response.parsed_body.fetch("refresh_token")
 
-      # The already-used token gets presented again (e.g. it was stolen, or a
-      # client double-submitted an old copy of it).
-      post "/token", params: params
+      # The already-used token gets presented again well after the grace
+      # window (e.g. it was stolen, or a client held onto an old copy).
+      travel_to((grace_period + 1.second).from_now) { post "/token", params: params }
 
       # Now even the token that was legitimately handed back is dead too.
       post "/token", params: params.merge(refresh_token: current_token)
@@ -90,9 +92,78 @@ RSpec.describe "POST /token (refresh_token grant)", type: :request do
 
     it "does not re-issue a refresh token to a token that was killed by reuse detection" do
       post "/token", params: params
-      post "/token", params: params # reuse: kills the family
+      travel_to((grace_period + 1.second).from_now) { post "/token", params: params } # reuse: kills the family
 
       expect(RefreshToken.where(family_id: refresh_token.family_id).pluck(:revoked_at)).to all(be_present)
+    end
+
+    it "still revokes an immediate re-presentation if the child was already used by someone else" do
+      # The signature of a genuine race: two different parties each already
+      # got a token derived from the same parent, not a client retrying alone.
+      post "/token", params: params
+      child = response.parsed_body.fetch("refresh_token")
+      post "/token", params: params.merge(refresh_token: child) # the child gets used too
+
+      post "/token", params: params # parent presented again, immediately
+
+      expect(response.parsed_body).to include("error" => "invalid_grant")
+      expect(RefreshToken.where(family_id: refresh_token.family_id).pluck(:revoked_at)).to all(be_present)
+    end
+  end
+
+  describe "grace period (retrying with a token whose rotated response was lost)" do
+    let(:grace_period) { Rails.configuration.x.oidc.refresh_token_grace_period }
+
+    it "lets the same, already-consumed token be exchanged once more within the window" do
+      post "/token", params: params
+      first_child = response.parsed_body.fetch("refresh_token")
+
+      post "/token", params: params # presented again, before anyone used first_child
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body["refresh_token"]).to be_present
+      expect(response.parsed_body["refresh_token"]).not_to eq(first_child)
+      expect(response.parsed_body["access_token"]).to be_present
+    end
+
+    it "consumes the untouched child rather than leaving it usable afterwards" do
+      post "/token", params: params
+      first_child = RefreshToken.lookup(response.parsed_body.fetch("refresh_token"))
+
+      post "/token", params: params
+
+      expect(first_child.reload).to be_consumed
+    end
+
+    it "still belongs to the same family and carries the same auth_time" do
+      post "/token", params: params
+
+      post "/token", params: params
+
+      grandchild = RefreshToken.lookup(response.parsed_body["refresh_token"])
+      expect(grandchild.family_id).to eq(refresh_token.family_id)
+      expect(grandchild.auth_time).to eq(refresh_token.auth_time)
+    end
+
+    it "only forgives the single most-recently-issued token, not one further back" do
+      post "/token", params: params # parent -> child (fine, ordinary rotation)
+      post "/token", params: params # parent presented again -> grace-forgiven, child consumed, grandchild issued
+
+      # The *parent* gets presented a third time. Its child is no longer
+      # untouched (the grace step just consumed it), so this is no longer
+      # forgivable — even though it's still well within the window.
+      post "/token", params: params
+
+      expect(response).to have_http_status(:bad_request)
+      expect(response.parsed_body).to include("error" => "invalid_grant")
+    end
+
+    it "does not extend forgiveness past the configured window" do
+      post "/token", params: params
+
+      travel_to((grace_period + 1.second).from_now) { post "/token", params: params }
+
+      expect(response.parsed_body).to include("error" => "invalid_grant")
     end
   end
 

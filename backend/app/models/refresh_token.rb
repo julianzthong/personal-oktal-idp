@@ -11,6 +11,7 @@
 class RefreshToken < ApplicationRecord
   belongs_to :user
   belongs_to :oauth_client
+  belongs_to :replaced_by, class_name: "RefreshToken", optional: true
 
   attr_reader :token
 
@@ -22,12 +23,16 @@ class RefreshToken < ApplicationRecord
       create_in_family!(user: user, client: client, scopes: scopes, auth_time: auth_time, family_id: SecureRandom.uuid)
     end
 
-    # Issues the next token in `previous`'s family, as part of rotating it away.
+    # Issues the next token in `previous`'s family, as part of rotating it away,
+    # and links `previous` to it so a later lost-response retry can be told
+    # apart from real reuse (see #grace_eligible?).
     def rotate!(previous, scopes: previous.scopes)
-      create_in_family!(
-        user: previous.user, client: previous.oauth_client, scopes: scopes,
-        auth_time: previous.auth_time, family_id: previous.family_id
-      )
+      transaction do
+        create_in_family!(
+          user: previous.user, client: previous.oauth_client, scopes: scopes,
+          auth_time: previous.auth_time, family_id: previous.family_id
+        ).tap { |next_token| previous.update_column(:replaced_by_id, next_token.id) }
+      end
     end
 
     # The token is 256 bits of randomness, so an unsalted digest is sufficient.
@@ -64,6 +69,10 @@ class RefreshToken < ApplicationRecord
     consumed_at.present?
   end
 
+  def revoked?
+    revoked_at.present?
+  end
+
   # Atomically marks the token used. False if it was already consumed, or the
   # family was already revoked — either way, a sign this token shouldn't be
   # honored, and the caller should treat it as reuse.
@@ -74,5 +83,17 @@ class RefreshToken < ApplicationRecord
   # Shuts down every token descended from the same original issuance.
   def revoke_family!
     self.class.where(family_id: family_id, revoked_at: nil).update_all(revoked_at: Time.current)
+  end
+
+  # Whether this already-consumed token still deserves the benefit of the
+  # doubt: it must be the single most-recently-issued token in its family
+  # (its replacement has never itself been touched) and recently enough
+  # consumed that presenting it again looks like a client retrying after a
+  # lost response, not a second, independent use of it. Outside either
+  # condition, a repeat presentation is treated as real reuse.
+  def grace_eligible?
+    consumed? && !revoked? && !expired? &&
+      consumed_at > Rails.configuration.x.oidc.refresh_token_grace_period.ago &&
+      replaced_by.present? && !replaced_by.consumed? && !replaced_by.revoked? && !replaced_by.expired?
   end
 end
