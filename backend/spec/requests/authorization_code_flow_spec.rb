@@ -26,7 +26,19 @@ RSpec.describe "Authorization code flow", type: :request do
       scope: "openid profile", nonce: "n-0S6_WzA2Mj",
       code_challenge: challenge, code_challenge_method: "S256"
     }
+
+    # First visit for this client: no code yet, the user is sent to consent.
+    expect(response.location).to start_with("#{Rails.configuration.x.oidc.consent_url}?")
+    expect(redirect_params).to include("client_name" => client.name, "scope" => "openid profile")
+    get URI.parse(redirect_params.fetch("return_to")).request_uri.then { |path| "#{path}&allow=true" }
     code = redirect_params.fetch("code")
+
+    # A second visit no longer needs consent.
+    get "/authorize", params: {
+      response_type: "code", client_id: client.client_id, redirect_uri: client.redirect_uri,
+      scope: "openid profile", code_challenge: challenge, code_challenge_method: "S256"
+    }
+    expect(response.location).to start_with(client.redirect_uri)
 
     post "/token", params: {
       grant_type: "authorization_code", code: code, redirect_uri: client.redirect_uri,

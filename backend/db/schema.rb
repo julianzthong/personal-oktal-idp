@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_21_150000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_29_120000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -30,6 +30,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_21_150000) do
     t.index ["code_digest"], name: "index_authorization_codes_on_code_digest", unique: true
     t.index ["oauth_client_id"], name: "index_authorization_codes_on_oauth_client_id"
     t.index ["user_id"], name: "index_authorization_codes_on_user_id"
+  end
+
+  create_table "grants", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.uuid "oauth_client_id", null: false
+    t.string "scopes", default: [], null: false, array: true
+    t.datetime "updated_at", null: false
+    t.uuid "user_id", null: false
+    t.index ["oauth_client_id"], name: "index_grants_on_oauth_client_id"
+    t.index ["user_id", "oauth_client_id"], name: "index_grants_on_user_id_and_oauth_client_id", unique: true
+    t.index ["user_id"], name: "index_grants_on_user_id"
   end
 
   create_table "oauth_clients", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -77,4 +88,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_21_150000) do
 
   add_foreign_key "authorization_codes", "oauth_clients"
   add_foreign_key "authorization_codes", "users"
+  add_foreign_key "grants", "oauth_clients"
+  add_foreign_key "grants", "users"
 end

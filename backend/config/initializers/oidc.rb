@@ -10,6 +10,9 @@ Rails.application.config.x.oidc.tap do |oidc|
   # Where /authorize sends users who aren't logged in yet.
   oidc.login_url = ENV.fetch("OIDC_LOGIN_URL", "#{oidc.frontend_origin}/login")
 
+  # Where /authorize sends a logged-in user who hasn't yet approved these scopes for this client.
+  oidc.consent_url = ENV.fetch("OIDC_CONSENT_URL", "#{oidc.frontend_origin}/consent")
+
   oidc.access_token_ttl = 1.hour
   oidc.id_token_ttl = 10.minutes
 

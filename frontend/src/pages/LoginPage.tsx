@@ -9,7 +9,7 @@ import './auth.css'
 export default function LoginPage() {
   const [searchParams] = useSearchParams()
   const { search } = useLocation() // carried over to the signup link so return_to survives
-  const returnTo = safeReturnTo(searchParams.get('return_to'))
+  const returnTo = safeReturnTo(searchParams.get('return_to'), '/authorize')
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')

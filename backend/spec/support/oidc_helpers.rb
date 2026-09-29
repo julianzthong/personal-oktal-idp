@@ -29,6 +29,12 @@ module OidcHelpers
     Rack::Utils.parse_query(URI.parse(response.location).query)
   end
 
+  # Pre-approves a client for a user, as if they'd already been through the
+  # consent screen once. /authorize then skips straight to issuing a code.
+  def grant_consent(user, client, scopes = %w[openid email])
+    Grant.grant!(user: user, client: client, scopes: scopes)
+  end
+
   def basic_auth_header(client_id, client_secret)
     { "Authorization" => ActionController::HttpAuthentication::Basic.encode_credentials(client_id, client_secret) }
   end
@@ -36,5 +42,8 @@ end
 
 RSpec.configure do |config|
   config.include OidcHelpers, type: :request
+  # create_user/create_client are plain factory methods with no dependency on a
+  # request; model specs (e.g. Grant) use them too.
+  config.include OidcHelpers, type: :model
   config.include ActiveSupport::Testing::TimeHelpers
 end

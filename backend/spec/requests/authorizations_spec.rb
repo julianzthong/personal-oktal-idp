@@ -9,8 +9,11 @@ RSpec.describe "GET /authorize", type: :request do
       code_challenge: OidcHelpers::PKCE_CHALLENGE, code_challenge_method: "S256" }
   end
 
-  context "when the user is logged in" do
-    before { log_in(user) }
+  context "when the user is logged in and has already consented to these scopes" do
+    before do
+      log_in(user)
+      grant_consent(user, client, %w[openid email])
+    end
 
     it "redirects to the client's redirect_uri with a code and the original state" do
       get "/authorize", params: params
@@ -83,6 +86,48 @@ RSpec.describe "GET /authorize", type: :request do
     end
   end
 
+  context "when the user is logged in but has not consented to these scopes" do
+    before { log_in(user) }
+
+    it "redirects to the consent page, carrying the original request, and issues no code" do
+      get "/authorize", params: params
+
+      expect(response).to have_http_status(:found)
+      expect(response.location).to start_with("#{Rails.configuration.x.oidc.consent_url}?")
+      expect(redirect_params).to include("client_name" => client.name, "scope" => "openid email")
+      return_to = redirect_params.fetch("return_to")
+      expect(return_to).to start_with("#{Rails.configuration.x.oidc.issuer}/consent?")
+      expect(Rack::Utils.parse_query(URI.parse(return_to).query)).to include(
+        "client_id" => client.client_id, "state" => "xyz", "code_challenge" => OidcHelpers::PKCE_CHALLENGE
+      )
+      expect(AuthorizationCode.count).to eq(0)
+      expect(Grant.count).to eq(0)
+    end
+
+    it "does not require consent when the request has no scopes to consent to" do
+      get "/authorize", params: params.merge(scope: "")
+
+      expect(response.location).to start_with("https://app.example.com/callback?")
+      expect(Grant.count).to eq(0)
+    end
+
+    it "goes straight to the client once a grant already covers a superset of the requested scopes" do
+      grant_consent(user, client, %w[openid profile email])
+
+      get "/authorize", params: params.merge(scope: "openid email")
+
+      expect(response.location).to start_with("https://app.example.com/callback?")
+    end
+
+    it "still asks for consent again if the existing grant is missing one of the requested scopes" do
+      grant_consent(user, client, %w[openid])
+
+      get "/authorize", params: params.merge(scope: "openid email")
+
+      expect(response.location).to start_with("#{Rails.configuration.x.oidc.consent_url}?")
+    end
+  end
+
   context "when the user is not logged in" do
     it "redirects to the login page, carrying the original request, and issues no code" do
       get "/authorize", params: params
@@ -97,7 +142,18 @@ RSpec.describe "GET /authorize", type: :request do
       expect(AuthorizationCode.count).to eq(0)
     end
 
-    it "issues a code when the returned request is resumed after logging in" do
+    it "goes on to ask for consent once the returned request is resumed after logging in" do
+      get "/authorize", params: params
+      resume_path = URI.parse(redirect_params.fetch("return_to")).request_uri
+
+      log_in(user)
+      get resume_path
+
+      expect(response.location).to start_with("#{Rails.configuration.x.oidc.consent_url}?")
+    end
+
+    it "issues a code straight away after login when consent was already given" do
+      grant_consent(user, client, %w[openid email])
       get "/authorize", params: params
       resume_path = URI.parse(redirect_params.fetch("return_to")).request_uri
 

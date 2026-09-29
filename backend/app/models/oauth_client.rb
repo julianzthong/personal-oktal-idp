@@ -8,6 +8,7 @@ class OauthClient < ApplicationRecord
   has_secure_password :client_secret, validations: false
 
   has_many :authorization_codes, dependent: :destroy
+  has_many :grants, dependent: :destroy
 
   before_validation :generate_credentials, on: :create
 

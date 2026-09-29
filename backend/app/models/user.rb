@@ -2,6 +2,7 @@ class User < ApplicationRecord
   has_secure_password
 
   has_many :authorization_codes, dependent: :destroy
+  has_many :grants, dependent: :destroy
 
   normalizes :email, with: ->(email) { email.strip.downcase }
   normalizes :name, with: ->(name) { name.strip.presence }
